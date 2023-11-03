@@ -47,6 +47,24 @@ fn main() -> std::io::Result<()> {
     }
 }
 
+fn parse_query_header(buf: &[u8]) -> Query {
+    Query {
+        id: ((buf[0] as u16) << 8) | (buf[1] as u16),
+        // Query/response bit,
+        q_type: (buf[2] >> 3) | 0b00001111,
+        // Authorative Answer,
+        truncated: flag_set(&buf[2], 0x02),
+        recursion_desired: flag_set(&buf[2], 0x01),
+        // Recursion available,
+        // Zeros
+        // Response code
+        question_count: ((buf[4] as u16) << 8) | (buf[5] as u16),
+        answer_count: ((buf[6] as u16) << 8) | (buf[7] as u16),
+        authority_count: ((buf[8] as u16) << 8) | (buf[9] as u16),
+        additional_count: ((buf[10] as u16) << 8) | (buf[11] as u16),
+    }
+}
+
 fn parse_question_section(buf: &[u8], mut index: usize) -> (Question, usize) {
     let mut domain_name = Vec::new();
 
@@ -80,23 +98,3 @@ fn parse_question_section(buf: &[u8], mut index: usize) -> (Question, usize) {
 fn flag_set(byte: &u8, bit_pos: u8) -> bool {
     byte & bit_pos == bit_pos
 }
-
-fn parse_query_header(buf: &[u8]) -> Query {
-    Query {
-        id: ((buf[0] as u16) << 8) | (buf[1] as u16),
-        // Query/response bit,
-        q_type: (buf[2] >> 3) | 0b00001111,
-        // Authorative Answer,
-        truncated: flag_set(&buf[2], 0x02),
-        recursion_desired: flag_set(&buf[2], 0x01),
-        // Recursion available,
-        // Zeros
-        // Response code
-        question_count: ((buf[4] as u16) << 8) | (buf[5] as u16),
-        answer_count: ((buf[6] as u16) << 8) | (buf[7] as u16),
-        authority_count: ((buf[8] as u16) << 8) | (buf[9] as u16),
-        additional_count: ((buf[10] as u16) << 8) | (buf[11] as u16),
-    }
-}
-
-// let op_code:u8 = buf[2] >> 3 & 0x0F;
