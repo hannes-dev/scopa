@@ -26,24 +26,38 @@ struct Question {
 }
 
 fn main() -> std::io::Result<()> {
-    let socket = UdpSocket::bind("127.0.0.1:2000")?;
-    let mut buf = [0; 512];
+    let client = UdpSocket::bind("127.0.0.1:2000")?;
+    let server = UdpSocket::bind("0.0.0.0:2001")?;
+    let mut req = [0; 512];
+    let mut resp = [0; 512];
 
     loop {
-        let (amt, src) = socket.recv_from(&mut buf)?;
+        let (amt, src) = client.recv_from(&mut req)?;
+        server.send_to(&req, "1.1.1.1:53")?;
+        let resp_amt = server.recv(&mut resp)?;
+        client.send_to(&resp[..resp_amt], src)?;
 
         println!("Received {} bytes from: {}", amt, src);
 
-        let query = parse_query_header(&buf);
+        let query = parse_query_header(&req);
         let index = 12;
-        let (question, index) = parse_question_section(&buf, index);
+        let (question, index) = parse_question_section(&req, index);
 
         println!("{:?}", query);
         println!("{:?}", question);
-        for i in index..amt {
-            print!("{} ", buf[i]);
+        print!("Query    ");
+        for i in 0..amt {
+            print!("{} ", req[i]);
         }
         println!();
+
+        let query = parse_query_header(&resp);
+        print!("Response ");
+        for i in 0..resp_amt {
+            print!("{} ", resp[i]);
+        }
+        println!();
+        println!("{:?}", query);
     }
 }
 
