@@ -1,12 +1,7 @@
-use std::net::UdpSocket;
-
-enum MessageType {
-    Query,
-    Response,
-}
+use std::{collections::HashMap, net::UdpSocket, hash::Hash};
 
 #[derive(Debug)]
-struct Query {
+struct Header {
     id: u16,
     q_type: u8,
     truncated: bool,
@@ -38,12 +33,11 @@ fn main() -> std::io::Result<()> {
         client.send_to(&resp[..resp_amt], src)?;
 
         println!("Received {} bytes from: {}", amt, src);
+        let mut index = 0;
+        let header = parse_header(&req, &mut index);
+        let question = parse_question(&req, &mut index);
 
-        let query = parse_query_header(&req);
-        let index = 12;
-        let (question, index) = parse_question_section(&req, index);
-
-        println!("{:?}", query);
+        println!("{:?}", header);
         println!("{:?}", question);
         print!("Query    ");
         for i in 0..amt {
@@ -51,7 +45,7 @@ fn main() -> std::io::Result<()> {
         }
         println!();
 
-        let query = parse_query_header(&resp);
+        let query = parse_header(&resp, &mut 0);
         print!("Response ");
         for i in 0..resp_amt {
             print!("{} ", resp[i]);
@@ -61,8 +55,10 @@ fn main() -> std::io::Result<()> {
     }
 }
 
-fn parse_query_header(buf: &[u8]) -> Query {
-    Query {
+fn parse_header(buf: &[u8], index: &mut usize) -> Header {
+    *index = 12;
+
+    Header {
         id: ((buf[0] as u16) << 8) | (buf[1] as u16),
         // Query/response bit,
         q_type: (buf[2] >> 3) | 0b00001111,
@@ -79,34 +75,36 @@ fn parse_query_header(buf: &[u8]) -> Query {
     }
 }
 
-fn parse_question_section(buf: &[u8], mut index: usize) -> (Question, usize) {
-    let mut domain_name = Vec::new();
+fn parse_question(buf: &[u8], index: &mut usize) -> Question {
+    let domain_name = parse_name(buf, index);
 
-    let mut length = buf[index] as usize;
-    index += 1;
+    let q_type = ((buf[*index] as u16) << 8) | (buf[*index + 1] as u16);
+    *index += 2;
+    let q_class = ((buf[*index] as u16) << 8) | (buf[*index + 1] as u16);
+    *index += 2;
+
+    Question {
+        domain_name,
+        q_type,
+        q_class,
+    }
+}
+
+fn parse_name(buf: &[u8], index: &mut usize) -> Vec<String> {
+    let mut name = Vec::new();
+    let mut length = buf[*index] as usize;
+    *index += 1;
 
     while length > 0 {
-        let label = String::from_utf8_lossy(&buf[index..index + length]).to_string();
-        domain_name.push(label);
+        let label = String::from_utf8_lossy(&buf[*index..*index + length]).to_string();
+        name.push(label);
 
-        index += length;
-        length = buf[index] as usize;
-        index += 1;
+        *index += length;
+        length = buf[*index] as usize;
+        *index += 1;
     }
 
-    let q_type = ((buf[index] as u16) << 8) | (buf[index + 1] as u16);
-    index += 2;
-    let q_class = ((buf[index + 2] as u16) << 8) | (buf[index + 3] as u16);
-    index += 2;
-
-    (
-        Question {
-            domain_name,
-            q_type,
-            q_class,
-        },
-        index,
-    )
+    name
 }
 
 fn flag_set(byte: &u8, bit_pos: u8) -> bool {
