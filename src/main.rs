@@ -35,7 +35,9 @@ fn main() -> std::io::Result<()> {
         println!("Received {} bytes from: {}", amt, src);
         let mut index = 0;
         let header = parse_header(&req, &mut index);
-        let question = parse_question(&req, &mut index);
+        
+        let mut names = HashMap::new();
+        let question = parse_question(&mut names, &req, &mut index);
 
         println!("{:?}", header);
         println!("{:?}", question);
@@ -75,8 +77,8 @@ fn parse_header(buf: &[u8], index: &mut usize) -> Header {
     }
 }
 
-fn parse_question(buf: &[u8], index: &mut usize) -> Question {
-    let domain_name = parse_name(buf, index);
+fn parse_question(names: &mut HashMap<usize, Vec<String>>, buf: &[u8], index: &mut usize) -> Question {
+    let domain_name = parse_name(names, buf, index);
 
     let q_type = ((buf[*index] as u16) << 8) | (buf[*index + 1] as u16);
     *index += 2;
@@ -90,9 +92,10 @@ fn parse_question(buf: &[u8], index: &mut usize) -> Question {
     }
 }
 
-fn parse_name(buf: &[u8], index: &mut usize) -> Vec<String> {
+fn parse_name(names: &mut HashMap<usize, Vec<String>>, buf: &[u8], index: &mut usize) -> Vec<String> {
     let mut name = Vec::new();
     let mut length = buf[*index] as usize;
+    let offset = *index;
     *index += 1;
 
     while length > 0 {
@@ -102,6 +105,10 @@ fn parse_name(buf: &[u8], index: &mut usize) -> Vec<String> {
         *index += length;
         length = buf[*index] as usize;
         *index += 1;
+    }
+
+    if !name.is_empty() {
+        names.insert(offset, name.clone());
     }
 
     name
