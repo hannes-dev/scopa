@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::UdpSocket};
+use std::{collections::HashMap, net::{UdpSocket, Ipv4Addr}};
 
 #[derive(Debug)]
 struct Header {
@@ -23,6 +23,16 @@ struct Question {
 #[derive(Debug)]
 struct ResourceRecord {
     name: Vec<String>,
+    r#type: u16,
+    class: u16,
+    ttl: u32,
+    data_length: u16,
+    data: ResourceData,
+}
+
+#[derive(Debug)]
+enum ResourceData {
+    A(Ipv4Addr),
 }
 
 #[derive(Debug)]
@@ -52,8 +62,8 @@ fn main() -> std::io::Result<()> {
         let parsed_request = parse_message(&request);
         let parsed_response = parse_message(&response);
 
-        dbg!(parsed_request);
-        dbg!(parsed_response);
+        println!("{parsed_request:?}");
+        println!("{parsed_response:?}");
     }
 }
 
@@ -125,7 +135,25 @@ fn parse_resource_records(
 
     for _ in 0..amt {
         let name = parse_name(names, buf, index);
-        resource_records.push(ResourceRecord { name })
+        let r#type = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
+        *index += 2;
+        let class = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
+        *index += 2;
+        let ttl = u32::from_be_bytes([buf[*index], buf[*index + 1], buf[*index + 2], buf[*index + 3]]);
+        *index += 4;
+        let data_length = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
+        *index += 2;
+        let data = match r#type {
+            1 => ResourceData::A(Ipv4Addr::from([
+                buf[*index],
+                buf[*index + 1],
+                buf[*index + 2],
+                buf[*index + 3],
+            ])),
+            _ => ResourceData::A(Ipv4Addr::new(0, 0, 0, 0)),
+        };
+        *index += data_length as usize;
+        resource_records.push(ResourceRecord { name, r#type, class, ttl, data_length, data })
     }
 
     Some(resource_records)
@@ -146,6 +174,7 @@ fn parse_name(
         if bits_set(&(length as u8), 0b11000000) {
             let offset = u16::from_be_bytes([length as u8 & 0b00111111, buf[*index]]) as usize;
             name.extend(names[&offset].clone());
+            *index += 1;
             break;
         }
 
