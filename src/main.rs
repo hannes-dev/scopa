@@ -76,7 +76,7 @@ fn parse_header(buf: &[u8], index: &mut usize) -> Header {
     *index = 12;
 
     Header {
-        id: ((buf[0] as u16) << 8) | (buf[1] as u16),
+        id: u16::from_be_bytes([buf[0], buf[1]]),
         // Query/response bit,
         q_type: (buf[2] >> 3) | 0b00001111,
         // Authorative Answer,
@@ -85,10 +85,10 @@ fn parse_header(buf: &[u8], index: &mut usize) -> Header {
         // Recursion available,
         // Zeros
         // Response code
-        question_count: ((buf[4] as u16) << 8) | (buf[5] as u16),
-        answer_count: ((buf[6] as u16) << 8) | (buf[7] as u16),
-        authority_count: ((buf[8] as u16) << 8) | (buf[9] as u16),
-        additional_count: ((buf[10] as u16) << 8) | (buf[11] as u16),
+        question_count: u16::from_be_bytes([buf[4], buf[5]]),
+        answer_count: u16::from_be_bytes([buf[6], buf[7]]),
+        authority_count: u16::from_be_bytes([buf[8], buf[9]]),
+        additional_count: u16::from_be_bytes([buf[10], buf[11]]),
     }
 }
 
@@ -99,9 +99,9 @@ fn parse_question(
 ) -> Question {
     let domain_name = parse_name(names, buf, index);
 
-    let q_type = ((buf[*index] as u16) << 8) | (buf[*index + 1] as u16);
+    let q_type = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
     *index += 2;
-    let q_class = ((buf[*index] as u16) << 8) | (buf[*index + 1] as u16);
+    let q_class = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
     *index += 2;
 
     Question {
@@ -144,7 +144,7 @@ fn parse_name(
     while length > 0 {
         // pointer to another name
         if bits_set(&(length as u8), 0b11000000) {
-            let offset = (length & 0b00111111 << 8) | buf[*index] as usize;
+            let offset = u16::from_be_bytes([length as u8 & 0b00111111, buf[*index]]) as usize;
             name.extend(names[&offset].clone());
             break;
         }
