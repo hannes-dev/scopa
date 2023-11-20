@@ -42,13 +42,41 @@ pub struct Message {
     answers: Option<Vec<ResourceRecord>>,
 }
 
+struct Buffer<'a> {
+    next_index: usize,
+    buffer: &'a [u8],
+}
+
+impl Buffer<'_> {
+    fn new(buf: &[u8]) -> Buffer {
+        Buffer {
+            next_index: 0,
+            buffer: buf,
+        }
+    }
+
+    fn next(&mut self) -> u8 {
+        let curr_index = self.next_index;
+        self.next_index += 1;
+
+        self.buffer[curr_index]
+    }
+
+    fn next_n(&mut self, n: usize) -> &[u8] {
+        let start = self.next_index;
+        self.next_index += n;
+
+        &self.buffer[start..self.next_index]
+    }
+}
+
 pub fn parse_message(buf: &[u8]) -> Message {
-    let mut index = 0;
-    let header = parse_header(&buf, &mut index);
+    let buf = &mut Buffer::new(buf);
+    let header = parse_header(buf);
 
     let mut names = HashMap::new();
-    let question = parse_question(&mut names, &buf, &mut index);
-    let answers = parse_resource_records(header.answer_count, &mut names, &buf, &mut index);
+    let question = parse_question(buf, &mut names);
+    let answers = parse_resource_records(buf, header.answer_count, &mut names);
 
     Message {
         header,
@@ -57,37 +85,38 @@ pub fn parse_message(buf: &[u8]) -> Message {
     }
 }
 
-fn parse_header(buf: &[u8], index: &mut usize) -> Header {
-    *index = 12;
+fn parse_header(buf: &mut Buffer) -> Header {
+    let id = u16::from_be_bytes([buf.next(), buf.next()]);
+
+    let flag_byte = buf.next();
+    // Query/response bit
+    let q_type = (flag_byte >> 3) & 0b00001111;
+    // Authorative Answer,
+    let truncated = bits_set(flag_byte, 0x02);
+    let recursion_desired = bits_set(flag_byte, 0x01);
+
+    buf.next();
+    // Recursion available,
+    // Zeros
+    // Response code
 
     Header {
-        id: u16::from_be_bytes([buf[0], buf[1]]),
-        // Query/response bit,
-        q_type: (buf[2] >> 3) & 0b00001111,
-        // Authorative Answer,
-        truncated: bits_set(&buf[2], 0x02),
-        recursion_desired: bits_set(&buf[2], 0x01),
-        // Recursion available,
-        // Zeros
-        // Response code
-        question_count: u16::from_be_bytes([buf[4], buf[5]]),
-        answer_count: u16::from_be_bytes([buf[6], buf[7]]),
-        authority_count: u16::from_be_bytes([buf[8], buf[9]]),
-        additional_count: u16::from_be_bytes([buf[10], buf[11]]),
+        id,
+        q_type,
+        truncated,
+        recursion_desired,
+        question_count: u16::from_be_bytes([buf.next(), buf.next()]),
+        answer_count: u16::from_be_bytes([buf.next(), buf.next()]),
+        authority_count: u16::from_be_bytes([buf.next(), buf.next()]),
+        additional_count: u16::from_be_bytes([buf.next(), buf.next()]),
     }
 }
 
-fn parse_question(
-    names: &mut HashMap<usize, Vec<String>>,
-    buf: &[u8],
-    index: &mut usize,
-) -> Question {
-    let domain_name = parse_name(names, buf, index);
+fn parse_question(buf: &mut Buffer, names: &mut HashMap<usize, Vec<String>>) -> Question {
+    let domain_name = parse_name(buf, names);
 
-    let q_type = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
-    *index += 2;
-    let q_class = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
-    *index += 2;
+    let q_type = u16::from_be_bytes([buf.next(), buf.next()]);
+    let q_class = u16::from_be_bytes([buf.next(), buf.next()]);
 
     Question {
         domain_name,
@@ -97,10 +126,9 @@ fn parse_question(
 }
 
 fn parse_resource_records(
+    buf: &mut Buffer,
     amt: u16,
     names: &mut HashMap<usize, Vec<String>>,
-    buf: &[u8],
-    index: &mut usize,
 ) -> Option<Vec<ResourceRecord>> {
     if amt == 0 {
         return None;
@@ -109,30 +137,21 @@ fn parse_resource_records(
     let mut resource_records = Vec::new();
 
     for _ in 0..amt {
-        let name = parse_name(names, buf, index);
-        let r#type = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
-        *index += 2;
-        let class = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
-        *index += 2;
-        let ttl = u32::from_be_bytes([
-            buf[*index],
-            buf[*index + 1],
-            buf[*index + 2],
-            buf[*index + 3],
-        ]);
-        *index += 4;
-        let data_length = u16::from_be_bytes([buf[*index], buf[*index + 1]]);
-        *index += 2;
+        let name = parse_name(buf, names);
+        let r#type = u16::from_be_bytes([buf.next(), buf.next()]);
+        let class = u16::from_be_bytes([buf.next(), buf.next()]);
+        let ttl = u32::from_be_bytes([buf.next(), buf.next(), buf.next(), buf.next()]);
+        let data_length = u16::from_be_bytes([buf.next(), buf.next()]);
         let data = match r#type {
             1 => ResourceData::A(Ipv4Addr::from([
-                buf[*index],
-                buf[*index + 1],
-                buf[*index + 2],
-                buf[*index + 3],
+                buf.next(),
+                buf.next(),
+                buf.next(),
+                buf.next(),
             ])),
             _ => ResourceData::A(Ipv4Addr::new(0, 0, 0, 0)),
         };
-        *index += data_length as usize;
+
         resource_records.push(ResourceRecord {
             name,
             r#type,
@@ -146,31 +165,23 @@ fn parse_resource_records(
     Some(resource_records)
 }
 
-fn parse_name(
-    names: &mut HashMap<usize, Vec<String>>,
-    buf: &[u8],
-    index: &mut usize,
-) -> Vec<String> {
+fn parse_name(buf: &mut Buffer, names: &mut HashMap<usize, Vec<String>>) -> Vec<String> {
     let mut name = Vec::new();
-    let mut length = buf[*index] as usize;
-    let offset = *index;
-    *index += 1;
+    let offset = buf.next_index;
+    let mut length = buf.next();
 
     while length > 0 {
         // pointer to another name
-        if bits_set(&(length as u8), 0b11000000) {
-            let offset = u16::from_be_bytes([length as u8 & 0b00111111, buf[*index]]) as usize;
+        if bits_set(length, 0b11000000) {
+            let offset = u16::from_be_bytes([length & 0b00111111, buf.next()]) as usize;
             name.extend(names[&offset].clone());
-            *index += 1;
             break;
         }
 
-        let label = String::from_utf8_lossy(&buf[*index..*index + length]).to_string();
+        let label = String::from_utf8_lossy(&buf.next_n(length as usize)).to_string();
         name.push(label);
 
-        *index += length;
-        length = buf[*index] as usize;
-        *index += 1;
+        length = buf.next();
     }
 
     if !name.is_empty() {
@@ -180,7 +191,7 @@ fn parse_name(
     name
 }
 
-fn bits_set(byte: &u8, bit_pos: u8) -> bool {
+fn bits_set(byte: u8, bit_pos: u8) -> bool {
     byte & bit_pos == bit_pos
 }
 
@@ -190,12 +201,28 @@ mod tests {
 
     #[test]
     fn test_parse_question() {
-        let buf = [141, 225, 1, 32, 0, 1, 0, 0, 0, 0, 0, 0, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1];
+        let buf = [
+            141, 225, 1, 32, 0, 1, 0, 0, 0, 0, 0, 0, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99,
+            111, 109, 0, 0, 1, 0, 1,
+        ];
         let parsed_message = parse_message(&buf);
 
         let expected_message = Message {
-            header: Header { id: 36321, q_type: 0, truncated: false, recursion_desired: true, question_count: 1, answer_count: 0, authority_count: 0, additional_count: 0 },
-            question: Question { domain_name: ["example".to_string(), "com".to_string()].into(), q_type: 1, q_class: 1 },
+            header: Header {
+                id: 36321,
+                q_type: 0,
+                truncated: false,
+                recursion_desired: true,
+                question_count: 1,
+                answer_count: 0,
+                authority_count: 0,
+                additional_count: 0,
+            },
+            question: Question {
+                domain_name: ["example".to_string(), "com".to_string()].into(),
+                q_type: 1,
+                q_class: 1,
+            },
             answers: None,
         };
 
@@ -206,14 +233,37 @@ mod tests {
 
     #[test]
     fn test_parse_response() {
-        let buf = [141, 225, 129, 160, 0, 1, 0, 1, 0, 0, 0, 0, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1, 192, 12, 0, 1, 0, 1, 0, 1, 42, 15, 0, 4, 93, 184, 216, 34];
+        let buf = [
+            141, 225, 129, 160, 0, 1, 0, 1, 0, 0, 0, 0, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99,
+            111, 109, 0, 0, 1, 0, 1, 192, 12, 0, 1, 0, 1, 0, 1, 42, 15, 0, 4, 93, 184, 216, 34,
+        ];
         let parsed_message = parse_message(&buf);
 
         let domain_name = vec!["example".to_string(), "com".to_string()];
         let expected_message = Message {
-            header: Header { id: 36321, q_type: 0, truncated: false, recursion_desired: true, question_count: 1, answer_count: 1, authority_count: 0, additional_count: 0 },
-            question: Question { domain_name: domain_name.clone(), q_type: 1, q_class: 1 },
-            answers: Some(vec![ResourceRecord { name: domain_name, r#type: 1, class: 1, ttl: 76303, data_length: 4, data: ResourceData::A(Ipv4Addr::from([93, 184, 216, 34])) }]),
+            header: Header {
+                id: 36321,
+                q_type: 0,
+                truncated: false,
+                recursion_desired: true,
+                question_count: 1,
+                answer_count: 1,
+                authority_count: 0,
+                additional_count: 0,
+            },
+            question: Question {
+                domain_name: domain_name.clone(),
+                q_type: 1,
+                q_class: 1,
+            },
+            answers: Some(vec![ResourceRecord {
+                name: domain_name,
+                r#type: 1,
+                class: 1,
+                ttl: 76303,
+                data_length: 4,
+                data: ResourceData::A(Ipv4Addr::from([93, 184, 216, 34])),
+            }]),
         };
 
         assert_eq!(expected_message.header, parsed_message.header);
