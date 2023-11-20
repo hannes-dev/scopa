@@ -63,7 +63,7 @@ fn parse_header(buf: &[u8], index: &mut usize) -> Header {
     Header {
         id: u16::from_be_bytes([buf[0], buf[1]]),
         // Query/response bit,
-        q_type: (buf[2] >> 3) | 0b00001111,
+        q_type: (buf[2] >> 3) & 0b00001111,
         // Authorative Answer,
         truncated: bits_set(&buf[2], 0x02),
         recursion_desired: bits_set(&buf[2], 0x01),
