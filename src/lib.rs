@@ -1,6 +1,6 @@
 use std::{collections::HashMap, net::Ipv4Addr};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct Header {
     id: u16,
     q_type: u8,
@@ -13,14 +13,14 @@ struct Header {
     additional_count: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct Question {
     domain_name: Vec<String>,
     q_type: u16,
     q_class: u16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct ResourceRecord {
     name: Vec<String>,
     r#type: u16,
@@ -30,12 +30,12 @@ struct ResourceRecord {
     data: ResourceData,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum ResourceData {
     A(Ipv4Addr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Message {
     header: Header,
     question: Question,
@@ -182,4 +182,42 @@ fn parse_name(
 
 fn bits_set(byte: &u8, bit_pos: u8) -> bool {
     byte & bit_pos == bit_pos
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_question() {
+        let buf = [141, 225, 1, 32, 0, 1, 0, 0, 0, 0, 0, 0, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1];
+        let parsed_message = parse_message(&buf);
+
+        let expected_message = Message {
+            header: Header { id: 36321, q_type: 0, truncated: false, recursion_desired: true, question_count: 1, answer_count: 0, authority_count: 0, additional_count: 0 },
+            question: Question { domain_name: ["example".to_string(), "com".to_string()].into(), q_type: 1, q_class: 1 },
+            answers: None,
+        };
+
+        assert_eq!(expected_message.header, parsed_message.header);
+        assert_eq!(expected_message.question, parsed_message.question);
+        assert_eq!(expected_message.answers, parsed_message.answers);
+    }
+
+    #[test]
+    fn test_parse_response() {
+        let buf = [141, 225, 129, 160, 0, 1, 0, 1, 0, 0, 0, 0, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1, 192, 12, 0, 1, 0, 1, 0, 1, 42, 15, 0, 4, 93, 184, 216, 34];
+        let parsed_message = parse_message(&buf);
+
+        let domain_name = vec!["example".to_string(), "com".to_string()];
+        let expected_message = Message {
+            header: Header { id: 36321, q_type: 0, truncated: false, recursion_desired: true, question_count: 1, answer_count: 1, authority_count: 0, additional_count: 0 },
+            question: Question { domain_name: domain_name.clone(), q_type: 1, q_class: 1 },
+            answers: Some(vec![ResourceRecord { name: domain_name, r#type: 1, class: 1, ttl: 76303, data_length: 4, data: ResourceData::A(Ipv4Addr::from([93, 184, 216, 34])) }]),
+        };
+
+        assert_eq!(expected_message.header, parsed_message.header);
+        assert_eq!(expected_message.question, parsed_message.question);
+        assert_eq!(expected_message.answers, parsed_message.answers);
+    }
 }
